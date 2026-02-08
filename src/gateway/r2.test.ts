@@ -146,8 +146,9 @@ describe('mountR2Storage', () => {
     it('returns true if mount fails but check shows it is actually mounted', async () => {
       const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox();
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))
-        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
+        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted before mount
+        .mockResolvedValueOnce(createMockProcess(''))  // clearS3fsPasswdFiles
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // isR2Mounted after error
 
       mountBucketMock.mockRejectedValue(new Error('Transient error'));
 

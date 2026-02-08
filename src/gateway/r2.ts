@@ -77,6 +77,33 @@ export async function mountR2Storage(sandbox: Sandbox, env: MoltbotEnv): Promise
 }
 
 /**
+ * Clear stale s3fs credential files inside the container.
+ *
+ * sandbox.mountBucket() appends credentials to the s3fs passwd file each time
+ * it is called. Because the container persists across Worker invocations
+ * (keepAlive / sleepAfter), a previous failed or successful mount leaves
+ * entries behind. On the next call s3fs sees duplicates and refuses to mount.
+ *
+ * Clearing the files before mounting ensures a clean slate every time.
+ */
+async function clearS3fsPasswdFiles(sandbox: Sandbox): Promise<void> {
+  try {
+    const proc = await sandbox.startProcess(
+      'rm -f /etc/passwd-s3fs /root/.passwd-s3fs 2>/dev/null; true',
+    );
+    let attempts = 0;
+    while (proc.status === 'running' && attempts < 10) {
+      // eslint-disable-next-line no-await-in-loop -- intentional sequential polling
+      await new Promise((r) => setTimeout(r, 200));
+      attempts++;
+    }
+  } catch (err) {
+    // Best-effort — if it fails the mount will still be attempted
+    console.log('clearS3fsPasswdFiles warning:', err);
+  }
+}
+
+/**
  * Internal mount implementation — always called at most once at a time.
  */
 async function doMount(sandbox: Sandbox, env: MoltbotEnv): Promise<boolean> {
@@ -88,6 +115,10 @@ async function doMount(sandbox: Sandbox, env: MoltbotEnv): Promise<boolean> {
 
   const bucketName = getR2BucketName(env);
   try {
+    // Remove stale s3fs passwd entries from previous mount attempts to prevent
+    // "multiple entries for the same bucket(default)" errors
+    await clearS3fsPasswdFiles(sandbox);
+
     console.log('Mounting R2 bucket', bucketName, 'at', R2_MOUNT_PATH);
     await sandbox.mountBucket(bucketName, R2_MOUNT_PATH, {
       endpoint: `https://${env.CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
