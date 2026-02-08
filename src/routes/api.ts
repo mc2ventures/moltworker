@@ -199,22 +199,23 @@ adminApi.post('/devices/approve-all', async (c) => {
 // GET /api/admin/storage - Get R2 storage status and last sync time
 adminApi.get('/storage', async (c) => {
   const sandbox = c.get('sandbox');
-  const hasCredentials = !!(
-    c.env.R2_ACCESS_KEY_ID &&
-    c.env.R2_SECRET_ACCESS_KEY &&
-    c.env.CF_ACCOUNT_ID
-  );
+  // CF_ACCOUNT_ID is the minimum requirement; the SDK may handle
+  // same-account R2 auth without explicit R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY.
+  const isConfigured = !!c.env.CF_ACCOUNT_ID;
+  const hasExplicitCreds = !!(c.env.R2_ACCESS_KEY_ID && c.env.R2_SECRET_ACCESS_KEY);
 
   // Check which credentials are missing
   const missing: string[] = [];
-  if (!c.env.R2_ACCESS_KEY_ID) missing.push('R2_ACCESS_KEY_ID');
-  if (!c.env.R2_SECRET_ACCESS_KEY) missing.push('R2_SECRET_ACCESS_KEY');
   if (!c.env.CF_ACCOUNT_ID) missing.push('CF_ACCOUNT_ID');
+  // Explicit R2 credentials are optional — note as such
+  if (!hasExplicitCreds) {
+    missing.push('R2_ACCESS_KEY_ID (optional)', 'R2_SECRET_ACCESS_KEY (optional)');
+  }
 
   let lastSync: string | null = null;
 
   // If R2 is configured, check for last sync timestamp
-  if (hasCredentials) {
+  if (isConfigured) {
     try {
       // Mount R2 if not already mounted
       await mountR2Storage(sandbox, c.env);
@@ -235,12 +236,13 @@ adminApi.get('/storage', async (c) => {
   }
 
   return c.json({
-    configured: hasCredentials,
+    configured: isConfigured,
+    hasExplicitCreds,
     missing: missing.length > 0 ? missing : undefined,
     lastSync,
-    message: hasCredentials
+    message: isConfigured
       ? 'R2 storage is configured. Your data will persist across container restarts.'
-      : 'R2 storage is not configured. Paired devices and conversations will be lost when the container restarts.',
+      : 'R2 storage is not configured (missing CF_ACCOUNT_ID). Paired devices and conversations will be lost when the container restarts.',
   });
 });
 

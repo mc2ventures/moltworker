@@ -248,11 +248,23 @@ Enable debug routes with `DEBUG_ROUTES=true` and check `/debug/processes`.
 
 ## R2 Storage Notes
 
-R2 is mounted via s3fs at `/data/moltbot`. Important gotchas:
+**Local development:** Bucket mounting (`mountBucket` / s3fs) **does not work with `wrangler dev`**. FUSE is not available in the local dev environment. You must deploy with `wrangler deploy` to use R2 mounting. See [Mount buckets](https://developers.cloudflare.com/sandbox/guides/mount-buckets/) — "Bucket mounting does not work with wrangler dev".
+
+R2 is mounted at `/data/moltbot` using a multi-strategy approach (see `src/gateway/r2.ts`):
+
+1. **SDK `mountBucket()` without credentials** — Tries first. The SDK may handle same-account R2 auth automatically or auto-detect `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from Worker secrets.
+2. **SDK `mountBucket()` with explicit credentials** — Falls back to passing `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` explicitly if available.
+3. **Manual s3fs mount** — Last resort. Writes credentials to `/etc/passwd-s3fs` and runs s3fs directly inside the container. Avoids the credential accumulation bug in older SDK versions.
+
+Only `CF_ACCOUNT_ID` is required (for the R2 endpoint URL). Explicit `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` are optional fallbacks.
+
+Important gotchas:
+
+- **FUSE required**: R2 mounting uses FUSE (s3fs). The Dockerfile installs the `fuse` package. If you see `fuse: device not found, try 'modprobe fuse' first`, the Sandbox **host** may not be exposing `/dev/fuse` to the container — a platform limitation. See [Cloudflare Containers FUSE example](https://developers.cloudflare.com/containers/examples/r2-fuse-mount/); if the issue persists, check Sandbox docs or Cloudflare support.
 
 - **rsync compatibility**: Use `rsync -r --no-times` instead of `rsync -a`. s3fs doesn't support setting timestamps, which causes rsync to fail with "Input/output error".
 
-- **Mount checking**: Don't rely on `sandbox.mountBucket()` error messages to detect "already mounted" state. Instead, check `mount | grep s3fs` to verify the mount status.
+- **Mount checking**: Always check `mount | grep s3fs` to verify the mount status. The `mountBucket()` API may throw "already in use" errors — the code handles this by checking if the mount is actually present.
 
 - **Never delete R2 data**: The mount directory `/data/moltbot` IS the R2 bucket. Running `rm -rf /data/moltbot/*` will DELETE your backup data. Always check mount status before any destructive operations.
 

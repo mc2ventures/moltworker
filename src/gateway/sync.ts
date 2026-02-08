@@ -30,9 +30,10 @@ export interface SyncResult {
  * @returns SyncResult with success status and optional error details
  */
 export async function syncToR2(sandbox: Sandbox, env: MoltbotEnv): Promise<SyncResult> {
-  // Check if R2 is configured
-  if (!env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY || !env.CF_ACCOUNT_ID) {
-    return { success: false, error: 'R2 storage is not configured' };
+  // Check if R2 is configured (CF_ACCOUNT_ID is the minimum requirement;
+  // mountR2Storage handles credential strategies internally)
+  if (!env.CF_ACCOUNT_ID) {
+    return { success: false, error: 'R2 storage is not configured (missing CF_ACCOUNT_ID)' };
   }
 
   // Mount R2 if not already mounted

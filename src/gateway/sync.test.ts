@@ -14,14 +14,31 @@ describe('syncToR2', () => {
   });
 
   describe('configuration checks', () => {
-    it('returns error when R2 is not configured', async () => {
+    it('returns error when CF_ACCOUNT_ID is missing', async () => {
       const { sandbox } = createMockSandbox();
       const env = createMockEnv();
 
       const result = await syncToR2(sandbox, env);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('R2 storage is not configured');
+      expect(result.error).toContain('not configured');
+    });
+
+    it('proceeds with only CF_ACCOUNT_ID (no explicit R2 credentials)', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox();
+      // mountR2Storage: isR2Mounted → mountBucket → isR2Mounted (mounted)
+      // sync: check openclaw.json → rsync → cat timestamp
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n')) // already mounted
+        .mockResolvedValueOnce(createMockProcess('ok'))  // check openclaw.json
+        .mockResolvedValueOnce(createMockProcess(''))    // rsync
+        .mockResolvedValueOnce(createMockProcess('2026-01-27T12:00:00+00:00'));  // timestamp
+
+      const env = createMockEnv({ CF_ACCOUNT_ID: 'account123' });
+
+      const result = await syncToR2(sandbox, env);
+
+      expect(result.success).toBe(true);
     });
 
     it('returns error when mount fails', async () => {
