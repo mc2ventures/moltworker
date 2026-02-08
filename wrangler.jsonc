@@ -59,7 +59,7 @@
   "r2_buckets": [
     {
       "binding": "MOLTBOT_BUCKET",
-      "bucket_name": "moltbot-data-chris",
+      "bucket_name": "moltdata",
     },
   ],
   // Cron trigger to sync moltbot data to R2 every 5 minutes
