@@ -246,6 +246,17 @@ npx wrangler secret list
 
 Enable debug routes with `DEBUG_ROUTES=true` and check `/debug/processes`.
 
+### Startup and /api/status
+
+When the gateway is not ready, the loading page polls `GET /api/status`. Response shapes:
+
+- `ok: true, status: 'running'` — Gateway is ready; loading page reloads.
+- `ok: false, status: 'no_process'` — No gateway process; startup is triggered (by first request or by status poll). Cold start can take 1–2 minutes.
+- `ok: false, status: 'starting'` — Process exists but port 18789 not yet listening.
+- `ok: false, status: 'error'` — Error checking status (includes `error` and `hint`).
+
+Log prefixes for startup debugging: `[Gateway]` (ensureMoltbotGateway steps), `[Status]` (/api/status), `[PROXY]` (catch-all, loading page), `[R2 Mount]` (R2 mount). Use `npx wrangler tail` to follow startup.
+
 ## R2 Storage Notes
 
 **Local development:** Bucket mounting (`mountBucket` / s3fs) **does not work with `wrangler dev`**. FUSE is not available in the local dev environment. You must deploy with `wrangler deploy` to use R2 mounting. See [Mount buckets](https://developers.cloudflare.com/sandbox/guides/mount-buckets/) — "Bucket mounting does not work with wrangler dev".

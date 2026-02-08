@@ -242,22 +242,26 @@ app.all('*', async (c) => {
   const acceptsHtml = request.headers.get('Accept')?.includes('text/html');
 
   if (!isGatewayReady && !isWebSocketRequest && acceptsHtml) {
-    console.log('[PROXY] Gateway not ready, serving loading page');
+    console.log(
+      '[PROXY] Gateway not ready (no process or not listening). Serving loading page and starting gateway in background.',
+    );
 
-    // Start the gateway in the background (don't await)
+    // Start the gateway in the background (don't await). Loading page will poll /api/status.
     c.executionCtx.waitUntil(
       ensureMoltbotGateway(sandbox, c.env).catch((err: Error) => {
-        console.error('[PROXY] Background gateway start failed:', err);
+        console.error('[PROXY] Background gateway start failed:', err?.message ?? err);
+        console.error('[PROXY] User will see loading until they refresh; check [Gateway] logs above for cause.');
       }),
     );
 
-    // Return the loading page immediately
     return c.html(loadingPageHtml);
   }
 
-  // Ensure moltbot is running (this will wait for startup)
+  // Ensure moltbot is running (this will wait for startup; may take 1–2 min on cold start)
   try {
+    console.log('[PROXY] Ensuring gateway is running (awaiting startup)...');
     await ensureMoltbotGateway(sandbox, c.env);
+    console.log('[PROXY] Gateway ready, proxying request');
   } catch (error) {
     console.error('[PROXY] Failed to start Moltbot:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';

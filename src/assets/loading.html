@@ -179,13 +179,27 @@
             return;
           }
 
-          // Update status message based on state
-          if (data.status === 'not_running') {
-            statusEl.textContent = 'Container is starting up...';
-          } else if (data.status === 'not_responding') {
-            statusEl.textContent = 'Container started, waiting for gateway...';
+          // Show error state when API returns status 'error'
+          if (data.status === 'error') {
+            errorEl.textContent = (data.message || data.error || 'Unknown error') + (data.hint ? ' — ' + data.hint : '');
+            errorEl.style.display = 'block';
+            statusEl.textContent = 'Error checking gateway';
           } else {
-            statusEl.textContent = 'Checking status... (poll #' + pollCount + ')';
+            errorEl.style.display = 'none';
+            const message =
+              data.message ||
+              (data.status === 'not_running' || data.status === 'no_process'
+                ? 'Container is starting up...'
+                : data.status === 'not_responding' || data.status === 'starting'
+                  ? 'Container started, waiting for gateway...'
+                  : 'Checking status... (poll #' + pollCount + ')');
+            statusEl.textContent = message;
+          }
+          if (data.hint && pollCount > 30 && data.status !== 'error') {
+            document.querySelector('.info').textContent = data.hint;
+          } else if (pollCount > 90 && data.status !== 'error') {
+            document.querySelector('.info').textContent =
+              'Taking longer than usual. Check worker logs: npx wrangler tail';
           }
 
           // Continue polling

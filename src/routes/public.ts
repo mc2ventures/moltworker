@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { MOLTBOT_PORT } from '../config';
-import { findExistingMoltbotProcess } from '../gateway';
+import { ensureMoltbotGateway, findExistingMoltbotProcess } from '../gateway';
 
 /**
  * Public routes - NO Cloudflare Access authentication required
@@ -37,22 +37,53 @@ publicRoutes.get('/api/status', async (c) => {
   try {
     const process = await findExistingMoltbotProcess(sandbox);
     if (!process) {
-      return c.json({ ok: false, status: 'not_running' });
+      console.log('[Status] No gateway process yet — triggering startup if not already in progress');
+      // Ensure startup is triggered (e.g. if first request served loading page but waitUntil didn't run)
+      c.executionCtx.waitUntil(
+        ensureMoltbotGateway(sandbox, c.env).catch((err: Error) => {
+          console.error('[Status] Background startup attempt failed:', err?.message ?? err);
+        }),
+      );
+      return c.json({
+        ok: false,
+        status: 'no_process',
+        message:
+          'No gateway process yet. Startup in progress (cold start can take 1–2 minutes).',
+        hint: 'If this persists, check worker logs: npx wrangler tail',
+      });
     }
 
     // Process exists, check if it's actually responding
-    // Try to reach the gateway with a short timeout
+    console.log('[Status] Process found:', process.id, 'status:', process.status, '- checking port');
     try {
       await process.waitForPort(18789, { mode: 'tcp', timeout: 5000 });
-      return c.json({ ok: true, status: 'running', processId: process.id });
+      console.log('[Status] Gateway is running and responding on port 18789');
+      return c.json({
+        ok: true,
+        status: 'running',
+        processId: process.id,
+        message: 'Gateway is ready.',
+      });
     } catch {
-      return c.json({ ok: false, status: 'not_responding', processId: process.id });
+      console.log('[Status] Process exists but port 18789 not responding yet');
+      return c.json({
+        ok: false,
+        status: 'starting',
+        processId: process.id,
+        processStatus: process.status,
+        message: 'Gateway process is starting, waiting for it to listen on port 18789...',
+        hint: 'If this persists >3 min, check worker logs: npx wrangler tail',
+      });
     }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[Status] Error checking gateway:', errorMessage);
     return c.json({
       ok: false,
       status: 'error',
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: errorMessage,
+      message: 'Failed to check gateway status.',
+      hint: 'Check worker logs: npx wrangler tail',
     });
   }
 });

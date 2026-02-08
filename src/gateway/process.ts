@@ -10,6 +10,8 @@ import { mountR2Storage } from './r2';
  * @param sandbox - The sandbox instance
  * @returns The process if found and running/starting, null otherwise
  */
+const LOG_PREFIX = '[Gateway]';
+
 export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Process | null> {
   try {
     const processes = await sandbox.listProcesses();
@@ -36,7 +38,7 @@ export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Proc
       }
     }
   } catch (e) {
-    console.log('Could not list processes:', e);
+    console.error(LOG_PREFIX, 'Could not list processes:', e);
   }
   return null;
 }
@@ -54,14 +56,20 @@ export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Proc
  * @returns The running gateway process
  */
 export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): Promise<Process> {
+  console.log(LOG_PREFIX, 'ensureMoltbotGateway: starting');
+
   // Mount R2 storage for persistent data (non-blocking if not configured)
   // R2 is used as a backup - the startup script will restore from it on boot
+  console.log(LOG_PREFIX, 'Step 1/3: Mounting R2 storage (if configured)...');
   await mountR2Storage(sandbox, env);
+  console.log(LOG_PREFIX, 'Step 1/3: R2 mount done');
 
   // Check if gateway is already running or starting
+  console.log(LOG_PREFIX, 'Step 2/3: Checking for existing gateway process...');
   const existingProcess = await findExistingMoltbotProcess(sandbox);
   if (existingProcess) {
     console.log(
+      LOG_PREFIX,
       'Found existing gateway process:',
       existingProcess.id,
       'status:',
@@ -69,70 +77,84 @@ export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): P
     );
 
     // Always use full startup timeout - a process can be "running" but not ready yet
-    // (e.g., just started by another concurrent request). Using a shorter timeout
-    // causes race conditions where we kill processes that are still initializing.
     try {
-      console.log('Waiting for gateway on port', MOLTBOT_PORT, 'timeout:', STARTUP_TIMEOUT_MS);
-      await existingProcess.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: STARTUP_TIMEOUT_MS });
-      console.log('Gateway is reachable');
+      console.log(
+        LOG_PREFIX,
+        'Waiting for port',
+        MOLTBOT_PORT,
+        '(timeout',
+        STARTUP_TIMEOUT_MS,
+        'ms)...',
+      );
+      await existingProcess.waitForPort(MOLTBOT_PORT, {
+        mode: 'tcp',
+        timeout: STARTUP_TIMEOUT_MS,
+      });
+      console.log(LOG_PREFIX, 'Gateway is reachable on port', MOLTBOT_PORT);
       return existingProcess;
       // eslint-disable-next-line no-unused-vars
     } catch (_e) {
-      // Timeout waiting for port - process is likely dead or stuck, kill and restart
-      console.log('Existing process not reachable after full timeout, killing and restarting...');
+      console.error(
+        LOG_PREFIX,
+        'Existing process not reachable after timeout — killing and will restart',
+      );
       try {
         await existingProcess.kill();
       } catch (killError) {
-        console.log('Failed to kill process:', killError);
+        console.error(LOG_PREFIX, 'Failed to kill process:', killError);
       }
     }
+  } else {
+    console.log(LOG_PREFIX, 'No existing gateway process');
   }
 
   // Start a new OpenClaw gateway
-  console.log('Starting new OpenClaw gateway...');
+  console.log(LOG_PREFIX, 'Step 3/3: Starting new OpenClaw gateway...');
   const envVars = buildEnvVars(env);
   const command = '/usr/local/bin/start-openclaw.sh';
-
-  console.log('Starting process with command:', command);
-  console.log('Environment vars being passed:', Object.keys(envVars));
+  console.log(LOG_PREFIX, 'Command:', command, '| Env keys:', Object.keys(envVars).length);
 
   let process: Process;
   try {
     process = await sandbox.startProcess(command, {
       env: Object.keys(envVars).length > 0 ? envVars : undefined,
     });
-    console.log('Process started with id:', process.id, 'status:', process.status);
+    console.log(LOG_PREFIX, 'Process started — id:', process.id, 'status:', process.status);
   } catch (startErr) {
-    console.error('Failed to start process:', startErr);
+    console.error(LOG_PREFIX, 'Failed to start process:', startErr);
     throw startErr;
   }
 
   // Wait for the gateway to be ready
   try {
-    console.log('[Gateway] Waiting for OpenClaw gateway to be ready on port', MOLTBOT_PORT);
+    console.log(
+      LOG_PREFIX,
+      'Waiting for OpenClaw to listen on port',
+      MOLTBOT_PORT,
+      '(timeout',
+      STARTUP_TIMEOUT_MS,
+      'ms)...',
+    );
     await process.waitForPort(MOLTBOT_PORT, { mode: 'tcp', timeout: STARTUP_TIMEOUT_MS });
-    console.log('[Gateway] OpenClaw gateway is ready!');
+    console.log(LOG_PREFIX, 'OpenClaw gateway is ready on port', MOLTBOT_PORT);
 
     const logs = await process.getLogs();
-    if (logs.stdout) console.log('[Gateway] stdout:', logs.stdout);
-    if (logs.stderr) console.log('[Gateway] stderr:', logs.stderr);
+    if (logs.stdout) console.log(LOG_PREFIX, 'stdout (recent):', logs.stdout.slice(-500));
+    if (logs.stderr) console.log(LOG_PREFIX, 'stderr (recent):', logs.stderr?.slice(-500));
   } catch (e) {
-    console.error('[Gateway] waitForPort failed:', e);
+    console.error(LOG_PREFIX, 'waitForPort failed:', e);
     try {
       const logs = await process.getLogs();
-      console.error('[Gateway] startup failed. Stderr:', logs.stderr);
-      console.error('[Gateway] startup failed. Stdout:', logs.stdout);
+      console.error(LOG_PREFIX, 'Startup failed. Stderr:', logs.stderr || '(empty)');
+      console.error(LOG_PREFIX, 'Startup failed. Stdout:', logs.stdout || '(empty)');
       throw new Error(`OpenClaw gateway failed to start. Stderr: ${logs.stderr || '(empty)'}`, {
         cause: e,
       });
     } catch (logErr) {
-      console.error('[Gateway] Failed to get logs:', logErr);
+      console.error(LOG_PREFIX, 'Failed to get logs:', logErr);
       throw e;
     }
   }
-
-  // Verify gateway is actually responding
-  console.log('[Gateway] Verifying gateway health...');
 
   return process;
 }
