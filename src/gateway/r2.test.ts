@@ -65,8 +65,15 @@ describe('mountR2Storage', () => {
   });
 
   describe('mounting behavior', () => {
-    it('mounts R2 bucket when credentials provided and not already mounted', async () => {
-      const { sandbox, mountBucketMock } = createMockSandbox({ mounted: false });
+    it('mounts R2 via s3fs when credentials provided and not already mounted', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: false });
+      // isR2Mounted (not mounted) → passwd setup → s3fs mount → isR2Mounted (mounted)
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted check
+        .mockResolvedValueOnce(createMockProcess(''))   // passwd file write
+        .mockResolvedValueOnce(createMockProcess(''))   // s3fs mount
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // verify
+
       const env = createMockEnvWithR2({
         R2_ACCESS_KEY_ID: 'key123',
         R2_SECRET_ACCESS_KEY: 'secret',
@@ -76,97 +83,115 @@ describe('mountR2Storage', () => {
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(true);
-      expect(mountBucketMock).toHaveBeenCalledWith('moltbot-data', '/data/moltbot', {
-        endpoint: 'https://account123.r2.cloudflarestorage.com',
-        credentials: {
-          accessKeyId: 'key123',
-          secretAccessKey: 'secret',
-        },
-      });
+      // Verify passwd file is written with env vars (not embedded in command)
+      expect(startProcessMock).toHaveBeenCalledWith(
+        expect.stringContaining('passwd-s3fs'),
+        expect.objectContaining({
+          env: { R2_KEY: 'key123', R2_SECRET: 'secret' },
+        }),
+      );
+      // Verify s3fs mount command
+      expect(startProcessMock).toHaveBeenCalledWith(
+        expect.stringContaining('s3fs moltbot-data /data/moltbot'),
+      );
     });
 
     it('uses custom bucket name from R2_BUCKET_NAME env var', async () => {
-      const { sandbox, mountBucketMock } = createMockSandbox({ mounted: false });
-      const env = createMockEnvWithR2({
-        R2_ACCESS_KEY_ID: 'key123',
-        R2_SECRET_ACCESS_KEY: 'secret',
-        CF_ACCOUNT_ID: 'account123',
-        R2_BUCKET_NAME: 'moltbot-e2e-test123',
-      });
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: false });
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
+
+      const env = createMockEnvWithR2({ R2_BUCKET_NAME: 'custom-bucket' });
 
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(true);
-      expect(mountBucketMock).toHaveBeenCalledWith(
-        'moltbot-e2e-test123',
-        '/data/moltbot',
-        expect.any(Object),
+      expect(startProcessMock).toHaveBeenCalledWith(
+        expect.stringContaining('s3fs custom-bucket /data/moltbot'),
       );
     });
 
     it('returns true immediately when bucket is already mounted', async () => {
-      const { sandbox, mountBucketMock } = createMockSandbox({ mounted: true });
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: true });
       const env = createMockEnvWithR2();
 
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(true);
-      expect(mountBucketMock).not.toHaveBeenCalled();
+      // Only one startProcess call (the isR2Mounted check) — no mount attempted
+      expect(startProcessMock).toHaveBeenCalledTimes(1);
       expect(console.log).toHaveBeenCalledWith('R2 bucket already mounted at', '/data/moltbot');
     });
 
-    it('logs success message when mounted successfully', async () => {
-      const { sandbox } = createMockSandbox({ mounted: false });
+    it('does not call mountBucket — uses direct s3fs instead', async () => {
+      const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
+
       const env = createMockEnvWithR2();
 
       await mountR2Storage(sandbox, env);
 
-      expect(console.log).toHaveBeenCalledWith(
-        'R2 bucket mounted successfully - moltbot data will persist across sessions',
-      );
+      expect(mountBucketMock).not.toHaveBeenCalled();
     });
   });
 
   describe('error handling', () => {
-    it('returns false when mountBucket throws and mount check fails', async () => {
-      const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
-      mountBucketMock.mockRejectedValue(new Error('Mount failed'));
+    it('returns false when s3fs mount fails and post-mount check fails', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: false });
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))
-        .mockResolvedValueOnce(createMockProcess(''));
+        .mockResolvedValueOnce(createMockProcess(''))               // isR2Mounted (not mounted)
+        .mockResolvedValueOnce(createMockProcess(''))               // passwd write
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1, stderr: 'mount error' }))  // s3fs fails
+        .mockResolvedValueOnce(createMockProcess(''))               // verify (not mounted)
+        .mockResolvedValueOnce(createMockProcess(''));              // final check (not mounted)
 
       const env = createMockEnvWithR2();
 
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(false);
-      expect(console.error).toHaveBeenCalledWith('Failed to mount R2 bucket:', expect.any(Error));
+      expect(console.error).toHaveBeenCalledWith(
+        'Failed to mount R2 bucket: s3fs mount did not succeed',
+      );
     });
 
-    it('returns true if mount fails but check shows it is actually mounted', async () => {
-      const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox();
+    it('returns true if mount check passes despite errors during setup', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox();
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted before mount
-        .mockResolvedValueOnce(createMockProcess(''))  // clearS3fsPasswdFiles
-        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // isR2Mounted after error
-
-      mountBucketMock.mockRejectedValue(new Error('Transient error'));
+        .mockResolvedValueOnce(createMockProcess(''))               // isR2Mounted (not mounted)
+        .mockRejectedValueOnce(new Error('startProcess failed'))    // passwd write throws
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // final check
 
       const env = createMockEnvWithR2();
 
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(true);
-      expect(console.log).toHaveBeenCalledWith('R2 bucket is mounted despite error');
+      expect(console.log).toHaveBeenCalledWith(
+        'R2 bucket is mounted despite errors during setup',
+      );
     });
   });
 
   describe('concurrent mount protection', () => {
-    it('only calls mountBucket once when invoked concurrently', async () => {
-      const { sandbox, mountBucketMock } = createMockSandbox({ mounted: false });
+    it('only runs mount once when invoked concurrently', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: false });
+      // Default mock returns empty (not mounted), override specific calls
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted
+        .mockResolvedValueOnce(createMockProcess(''))   // passwd write
+        .mockResolvedValueOnce(createMockProcess(''))   // s3fs mount
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // verify
+
       const env = createMockEnvWithR2();
 
-      // Fire two mount calls concurrently (simulates waitUntil + catch-all race)
       const [result1, result2] = await Promise.all([
         mountR2Storage(sandbox, env),
         mountR2Storage(sandbox, env),
@@ -174,30 +199,38 @@ describe('mountR2Storage', () => {
 
       expect(result1).toBe(true);
       expect(result2).toBe(true);
-      // mountBucket should only have been called once despite two concurrent callers
-      expect(mountBucketMock).toHaveBeenCalledTimes(1);
+      // passwd write + s3fs mount should only run once (plus isR2Mounted checks)
+      // No duplicate mount attempts
+      const mountCalls = startProcessMock.mock.calls.filter((call: unknown[]) =>
+        (call[0] as string).startsWith('mkdir -p'),
+      );
+      expect(mountCalls).toHaveLength(1);
     });
 
     it('resets lock after failure so next attempt can retry', async () => {
-      const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
-      // First attempt: mount fails and post-error check also says not mounted
-      mountBucketMock.mockRejectedValueOnce(new Error('Mount failed'));
+      const { sandbox, startProcessMock } = createMockSandbox({ mounted: false });
+      // First attempt: all checks fail
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess('')) // isR2Mounted before mount
-        .mockResolvedValueOnce(createMockProcess('')); // isR2Mounted after error
+        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted
+        .mockResolvedValueOnce(createMockProcess(''))   // passwd write
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 }))  // s3fs fails
+        .mockResolvedValueOnce(createMockProcess(''))   // verify (not mounted)
+        .mockResolvedValueOnce(createMockProcess(''));   // final check (not mounted)
 
       const env = createMockEnvWithR2();
 
       const result1 = await mountR2Storage(sandbox, env);
       expect(result1).toBe(false);
 
-      // Second attempt should be allowed (lock was released)
-      mountBucketMock.mockResolvedValueOnce(undefined);
-      startProcessMock.mockResolvedValueOnce(createMockProcess('')); // isR2Mounted before mount
+      // Second attempt should work (lock was released)
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted
+        .mockResolvedValueOnce(createMockProcess(''))   // passwd write
+        .mockResolvedValueOnce(createMockProcess(''))   // s3fs mount
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // verify
 
       const result2 = await mountR2Storage(sandbox, env);
       expect(result2).toBe(true);
-      expect(mountBucketMock).toHaveBeenCalledTimes(2);
     });
   });
 });
