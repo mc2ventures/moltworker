@@ -58,11 +58,15 @@ export async function findExistingMoltbotProcess(sandbox: Sandbox): Promise<Proc
 export async function ensureMoltbotGateway(sandbox: Sandbox, env: MoltbotEnv): Promise<Process> {
   console.log(LOG_PREFIX, 'ensureMoltbotGateway: starting');
 
-  // Mount R2 storage for persistent data (non-blocking if not configured)
-  // R2 is used as a backup - the startup script will restore from it on boot
+  // Mount R2 storage for persistent data. Non-blocking: if mount fails (e.g. FUSE unavailable),
+  // we continue; gateway starts and only backup/restore is skipped.
   console.log(LOG_PREFIX, 'Step 1/3: Mounting R2 storage (if configured)...');
-  await mountR2Storage(sandbox, env);
-  console.log(LOG_PREFIX, 'Step 1/3: R2 mount done');
+  const r2Mounted = await mountR2Storage(sandbox, env);
+  if (!r2Mounted) {
+    console.log(LOG_PREFIX, 'Step 1/3: R2 not mounted — gateway will still start; backup/restore skipped.');
+  } else {
+    console.log(LOG_PREFIX, 'Step 1/3: R2 mount done');
+  }
 
   // Check if gateway is already running or starting
   console.log(LOG_PREFIX, 'Step 2/3: Checking for existing gateway process...');

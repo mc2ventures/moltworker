@@ -44,6 +44,7 @@ export interface MoltbotEnv {
   BROWSER?: Fetcher;
   CDP_SECRET?: string; // Shared secret for CDP endpoint authentication
   WORKER_URL?: string; // Public URL of the worker (for CDP endpoint)
+  BACKUP_RESTORE_TOKEN?: string; // Token for /internal/backup (restore from Worker when R2 not mounted)
 }
 
 /**

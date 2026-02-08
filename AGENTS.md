@@ -282,3 +282,18 @@ Important gotchas:
 - **Process status**: The sandbox API's `proc.status` may not update immediately after a process completes. Instead of checking `proc.status === 'completed'`, verify success by checking for expected output (e.g., timestamp file exists after sync).
 
 - **R2 prefix migration**: Backups are now stored under `openclaw/` prefix in R2 (was `clawdbot/`). The startup script handles restoring from both old and new prefixes with automatic migration.
+
+- **Mount is not a blocker**: If R2 mount fails (e.g. FUSE unavailable in Sandbox), the gateway still starts. Only backup (cron) and restore (startup script) are skipped. Cron logs "Backup skipped: R2 not mounted" instead of a hard error.
+
+### R2 without FUSE (alternative)
+
+When FUSE is unavailable (e.g. Sandbox host doesn't expose `/dev/fuse`), you can still use R2 via the **Worker binding** (`MOLTBOT_BUCKET`). The Worker has direct access to the bucket via [R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) (`get`, `put`, `list`, `delete`). No mount required.
+
+**Possible approach for backup/restore without FUSE:**
+
+1. **Backup**: Run in container e.g. `tar cz /root/.openclaw /root/clawd | base64 -w0`; Worker reads process output (e.g. via logs or a streaming API if available), decodes, and `env.MOLTBOT_BUCKET.put('openclaw/backup.tar.gz', body)`. Constraint: output size and Worker memory; for large dirs, chunk or use multipart upload.
+2. **Restore**: Worker does `env.MOLTBOT_BUCKET.get('openclaw/backup.tar.gz')`, then either (a) pass body into container stdin if the Sandbox API supports it, or (b) expose a short-lived Worker route that streams the object and have the container `curl -s <url> | tar xz -C /root`.
+
+R2 also supports [presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/) (S3-compatible) for temporary download links, which could be used for restore if the container can reach the R2 endpoint with curl.
+
+Current code does not implement this path; the mount-based flow is the only active backup/restore. Adding a binding-based fallback when mount fails is a possible future improvement.

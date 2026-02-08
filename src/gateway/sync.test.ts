@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { syncToR2 } from './sync';
 import {
   createMockEnv,
@@ -14,14 +14,21 @@ describe('syncToR2', () => {
   });
 
   describe('configuration checks', () => {
-    it('returns error when CF_ACCOUNT_ID is missing', async () => {
-      const { sandbox } = createMockSandbox();
-      const env = createMockEnv();
+    it('falls back to binding backup when CF_ACCOUNT_ID is missing', async () => {
+      const { sandbox, startProcessMock } = createMockSandbox();
+      const putMock = vi.fn().mockResolvedValue(undefined);
+      const env = createMockEnv({
+        MOLTBOT_BUCKET: { put: putMock } as any,
+      });
+      // syncToR2Binding: test openclaw.json (exists), then tar (base64 output)
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 0 }))   // test -f openclaw
+        .mockResolvedValueOnce(createMockProcess('H4sIAAAAAAAAA+3BMQ0AAADCIPuntsYYwQAAAAAAAAAAAAAAAAAAAPBvBAgBAAAA')); // minimal gzip base64
 
       const result = await syncToR2(sandbox, env);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not configured');
+      expect(result.success).toBe(true);
+      expect(putMock).toHaveBeenCalled();
     });
 
     it('proceeds with only CF_ACCOUNT_ID (no explicit R2 credentials)', async () => {
@@ -41,17 +48,29 @@ describe('syncToR2', () => {
       expect(result.success).toBe(true);
     });
 
-    it('returns error when mount fails', async () => {
+    it('falls back to binding when mount fails', async () => {
       const { sandbox, startProcessMock, mountBucketMock } = createMockSandbox();
-      startProcessMock.mockResolvedValue(createMockProcess(''));
       mountBucketMock.mockRejectedValue(new Error('Mount failed'));
-
-      const env = createMockEnvWithR2();
+      const putMock = vi.fn().mockResolvedValue(undefined);
+      const env = createMockEnvWithR2({
+        MOLTBOT_BUCKET: { put: putMock } as any,
+      });
+      // Mount path: isR2Mounted, tryMountS3fs (setupProc, mountProc, isR2Mounted post-s3fs), isR2Mounted final-check.
+      // Binding path: test openclaw (exit 1), test clawdbot (exit 1) -> no config.
+      startProcessMock
+        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted fast-path
+        .mockResolvedValueOnce(createMockProcess(''))  // s3fs write creds
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 }))  // s3fs mount (e.g. no FUSE)
+        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted post-s3fs
+        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted final-check
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 }))  // test -f openclaw
+        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 })); // test -f clawdbot
 
       const result = await syncToR2(sandbox, env);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Failed to mount R2 storage');
+      expect(result.error).toBe('Sync aborted: no config file found');
+      expect(putMock).not.toHaveBeenCalled();
     });
   });
 

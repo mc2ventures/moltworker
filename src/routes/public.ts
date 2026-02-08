@@ -3,6 +3,8 @@ import type { AppEnv } from '../types';
 import { MOLTBOT_PORT } from '../config';
 import { ensureMoltbotGateway, findExistingMoltbotProcess } from '../gateway';
 
+const BACKUP_KEY = 'openclaw/backup.tar.gz';
+
 /**
  * Public routes - NO Cloudflare Access authentication required
  *
@@ -86,6 +88,25 @@ publicRoutes.get('/api/status', async (c) => {
       hint: 'Check worker logs: npx wrangler tail',
     });
   }
+});
+
+// GET /internal/backup - Stream R2 backup tarball for container restore (token auth, no CF Access)
+publicRoutes.get('/internal/backup', async (c) => {
+  const token =
+    c.req.query('token') ?? c.req.header('X-Backup-Token') ?? c.req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+  if (!c.env.BACKUP_RESTORE_TOKEN || token !== c.env.BACKUP_RESTORE_TOKEN) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const obj = await c.env.MOLTBOT_BUCKET.get(BACKUP_KEY);
+  if (!obj || !obj.body) {
+    return c.json({ error: 'No backup found' }, 404);
+  }
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': 'application/gzip',
+      'Content-Disposition': 'attachment; filename="backup.tar.gz"',
+    },
+  });
 });
 
 // GET /_admin/assets/* - Admin UI static assets (CSS, JS need to load for login redirect)
