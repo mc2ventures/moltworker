@@ -13,8 +13,8 @@ export const R2_MOUNT_PATH = '/data/moltbot';
 
 /**
  * R2 bucket name for persistent storage.
- * Can be overridden via R2_BUCKET_NAME env var for test isolation.
+ * Default must match wrangler.jsonc r2_buckets[].bucket_name. Override via R2_BUCKET_NAME for tests.
  */
 export function getR2BucketName(env?: { R2_BUCKET_NAME?: string }): string {
-  return env?.R2_BUCKET_NAME || 'moltbot-data';
+  return env?.R2_BUCKET_NAME || 'moltdata';
 }

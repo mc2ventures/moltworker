@@ -55,13 +55,10 @@ describe('syncToR2', () => {
       const env = createMockEnvWithR2({
         MOLTBOT_BUCKET: { put: putMock } as any,
       });
-      // Mount path: isR2Mounted, tryMountS3fs (setupProc, mountProc, isR2Mounted post-s3fs), isR2Mounted final-check.
+      // Mount path (official pattern only): isR2Mounted fast-path, then isR2Mounted final-check after mount fails.
       // Binding path: test openclaw (exit 1), test clawdbot (exit 1) -> no config.
       startProcessMock
         .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted fast-path
-        .mockResolvedValueOnce(createMockProcess(''))  // s3fs write creds
-        .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 }))  // s3fs mount (e.g. no FUSE)
-        .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted post-s3fs
         .mockResolvedValueOnce(createMockProcess(''))  // isR2Mounted final-check
         .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 }))  // test -f openclaw
         .mockResolvedValueOnce(createMockProcess('', { exitCode: 1 })); // test -f clawdbot

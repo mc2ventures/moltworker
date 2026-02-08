@@ -259,15 +259,14 @@ Log prefixes for startup debugging: `[Gateway]` (ensureMoltbotGateway steps), `[
 
 ## R2 Storage Notes
 
-**Local development:** Bucket mounting (`mountBucket` / s3fs) **does not work with `wrangler dev`**. FUSE is not available in the local dev environment. You must deploy with `wrangler deploy` to use R2 mounting. See [Mount buckets](https://developers.cloudflare.com/sandbox/guides/mount-buckets/) — "Bucket mounting does not work with wrangler dev".
+**Local development:** Bucket mounting **does not work with `wrangler dev`** (FUSE not available). Deploy with `wrangler deploy` to use R2 mounting. See [Persistent storage tutorial](https://developers.cloudflare.com/sandbox/tutorials/persistent-storage/) and [Mount buckets](https://developers.cloudflare.com/sandbox/guides/mount-buckets/).
 
-R2 is mounted at `/data/moltbot` using a multi-strategy approach (see `src/gateway/r2.ts`):
+R2 mount follows the **official tutorial** (see `src/gateway/r2.ts`):
 
-1. **SDK `mountBucket()` without credentials** — Tries first. The SDK may handle same-account R2 auth automatically or auto-detect `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from Worker secrets.
-2. **SDK `mountBucket()` with explicit credentials** — Falls back to passing `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` explicitly if available.
-3. **Manual s3fs mount** — Last resort. Writes credentials to `/etc/passwd-s3fs` and runs s3fs directly inside the container. Avoids the credential accumulation bug in older SDK versions.
+1. **`mountBucket(bucketName, path, { endpoint })`** — Endpoint only; SDK auto-detects `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from Worker secrets. Set via `npx wrangler secret put AWS_ACCESS_KEY_ID` (and `AWS_SECRET_ACCESS_KEY`).
+2. **Explicit credentials** — If the first call fails (e.g. MissingCredentialsError), we retry with `credentials: { accessKeyId, secretAccessKey }` using `R2_*` or `AWS_*` from env.
 
-Only `CF_ACCOUNT_ID` is required (for the R2 endpoint URL). Explicit `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` are optional fallbacks.
+Bucket name defaults to `wrangler.jsonc` `r2_buckets[].bucket_name` (e.g. `moltdata`); override with `R2_BUCKET_NAME`. Only `CF_ACCOUNT_ID` is required for the endpoint URL.
 
 Important gotchas:
 
@@ -275,7 +274,7 @@ Important gotchas:
 
 - **rsync compatibility**: Use `rsync -r --no-times` instead of `rsync -a`. s3fs doesn't support setting timestamps, which causes rsync to fail with "Input/output error".
 
-- **Mount checking**: Always check `mount | grep s3fs` to verify the mount status. The `mountBucket()` API may throw "already in use" errors — the code handles this by checking if the mount is actually present.
+- **Mount checking**: Use `mount | grep s3fs` to verify; see `isR2Mounted()` in r2.ts.
 
 - **Never delete R2 data**: The mount directory `/data/moltbot` IS the R2 bucket. Running `rm -rf /data/moltbot/*` will DELETE your backup data. Always check mount status before any destructive operations.
 
@@ -283,17 +282,8 @@ Important gotchas:
 
 - **R2 prefix migration**: Backups are now stored under `openclaw/` prefix in R2 (was `clawdbot/`). The startup script handles restoring from both old and new prefixes with automatic migration.
 
-- **Mount is not a blocker**: If R2 mount fails (e.g. FUSE unavailable in Sandbox), the gateway still starts. Only backup (cron) and restore (startup script) are skipped. Cron logs "Backup skipped: R2 not mounted" instead of a hard error.
+- **Mount is not a blocker**: If mount fails, the gateway still starts. Cron uses **binding backup** (tar.gz + Worker put) when mount is unavailable.
 
-### R2 without FUSE (alternative)
+### R2 without FUSE (binding backup)
 
-When FUSE is unavailable (e.g. Sandbox host doesn't expose `/dev/fuse`), you can still use R2 via the **Worker binding** (`MOLTBOT_BUCKET`). The Worker has direct access to the bucket via [R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) (`get`, `put`, `list`, `delete`). No mount required.
-
-**Possible approach for backup/restore without FUSE:**
-
-1. **Backup**: Run in container e.g. `tar cz /root/.openclaw /root/clawd | base64 -w0`; Worker reads process output (e.g. via logs or a streaming API if available), decodes, and `env.MOLTBOT_BUCKET.put('openclaw/backup.tar.gz', body)`. Constraint: output size and Worker memory; for large dirs, chunk or use multipart upload.
-2. **Restore**: Worker does `env.MOLTBOT_BUCKET.get('openclaw/backup.tar.gz')`, then either (a) pass body into container stdin if the Sandbox API supports it, or (b) expose a short-lived Worker route that streams the object and have the container `curl -s <url> | tar xz -C /root`.
-
-R2 also supports [presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/) (S3-compatible) for temporary download links, which could be used for restore if the container can reach the R2 endpoint with curl.
-
-Current code does not implement this path; the mount-based flow is the only active backup/restore. Adding a binding-based fallback when mount fails is a possible future improvement.
+When mount fails or FUSE is unavailable, backup/restore uses the **Worker binding** (`MOLTBOT_BUCKET`): backup runs `tar cz` in the container, Worker decodes base64 and `put()`s `openclaw/backup.tar.gz`; restore via `GET /internal/backup` (with `BACKUP_RESTORE_TOKEN`) streams to the container. See `sync-binding.ts`, `sync.ts`, and `start-openclaw.sh`.

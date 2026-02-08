@@ -37,12 +37,12 @@ CF_ACCESS_TEAM_DOMAIN=mc2fi.cloudflareaccess.com
 # TELEGRAM_BOT_TOKEN=optional
 # DISCORD_BOT_TOKEN=optional
 
-# R2 persistent storage (requires CF_ACCOUNT_ID at minimum)
-# Credentials: same keys from R2 "Manage R2 API Tokens". We use R2_* names; the
-# SDK also looks for AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (same values).
+# R2 persistent storage. Official guide: https://developers.cloudflare.com/sandbox/tutorials/persistent-storage/
+# In production set secrets: npx wrangler secret put AWS_ACCESS_KEY_ID (and AWS_SECRET_ACCESS_KEY).
+# Bucket name must match wrangler r2_buckets[].bucket_name (e.g. moltdata).
 # CF_ACCOUNT_ID=your-cloudflare-account-id
-# R2_ACCESS_KEY_ID=your-r2-access-key-id
-# R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+# AWS_ACCESS_KEY_ID=your-r2-access-key-id
+# AWS_SECRET_ACCESS_KEY=your-r2-secret-access-key
 
 # CDP (Chrome DevTools Protocol) configuration for browser automation
 # CDP_SECRET=shared-secret-for-cdp-auth

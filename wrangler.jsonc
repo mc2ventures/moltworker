@@ -96,8 +96,9 @@
   // - CDP_SECRET: Shared secret for /cdp endpoint authentication
   // - WORKER_URL: Public URL of the worker
   //
-  // R2 persistent storage (optional, for data persistence across sessions):
-  // - CF_ACCOUNT_ID: Your Cloudflare account ID (required for R2 endpoint URL)
-  // - R2_ACCESS_KEY_ID: R2 access key ID (optional — SDK may auto-detect or use same-account auth)
-  // - R2_SECRET_ACCESS_KEY: R2 secret access key (optional — SDK may auto-detect or use same-account auth)
+  // R2 persistent storage (optional). Per official guide: https://developers.cloudflare.com/sandbox/tutorials/persistent-storage/
+  // - CF_ACCOUNT_ID: Your Cloudflare account ID (required for R2 endpoint)
+  // - AWS_ACCESS_KEY_ID: R2 API token access key (npx wrangler secret put AWS_ACCESS_KEY_ID) — SDK auto-detects
+  // - AWS_SECRET_ACCESS_KEY: R2 API token secret (npx wrangler secret put AWS_SECRET_ACCESS_KEY)
+  // Optional fallback: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY (same values, passed explicitly to mountBucket)
 }

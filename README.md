@@ -194,19 +194,19 @@ By default, moltbot data (configs, paired devices, conversation history) is lost
 1. Go to **R2** > **Overview** in the [Cloudflare Dashboard](https://dash.cloudflare.com/)
 2. Click **Manage R2 API Tokens**
 3. Create a new token with **Object Read & Write** permissions
-4. Select the `moltbot-data` bucket (created automatically on first deploy)
+4. Select the bucket that matches your `wrangler.jsonc` `r2_buckets[].bucket_name` (e.g. `moltdata`)
 5. Copy the **Access Key ID** and **Secret Access Key**
 
 ### 2. Set Secrets
 
+Per the [Sandbox persistent storage tutorial](https://developers.cloudflare.com/sandbox/tutorials/persistent-storage/), set credentials as Worker secrets so the SDK can auto-detect them:
+
 ```bash
-# R2 Access Key ID
-npx wrangler secret put R2_ACCESS_KEY_ID
+# R2 credentials (SDK auto-detects these names)
+npx wrangler secret put AWS_ACCESS_KEY_ID
+npx wrangler secret put AWS_SECRET_ACCESS_KEY
 
-# R2 Secret Access Key
-npx wrangler secret put R2_SECRET_ACCESS_KEY
-
-# Your Cloudflare Account ID
+# Your Cloudflare Account ID (for R2 endpoint)
 npx wrangler secret put CF_ACCOUNT_ID
 ```
 

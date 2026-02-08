@@ -33,13 +33,15 @@ export interface MoltbotEnv {
   // Cloudflare Access configuration for admin routes
   CF_ACCESS_TEAM_DOMAIN?: string; // e.g., 'myteam.cloudflareaccess.com'
   CF_ACCESS_AUD?: string; // Application Audience (AUD) tag
-  // R2 credentials for bucket mounting (set via wrangler secret).
-  // Same keys as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (R2 is S3-compatible).
-  // We use R2_* so it's clear these are for R2; the Sandbox SDK also auto-detects AWS_*.
+  // R2 mount: per official guide use AWS_* as Worker secrets (SDK auto-detects).
+  // Optional R2_* or explicit credentials in mountBucket() as fallback.
+  // https://developers.cloudflare.com/sandbox/tutorials/persistent-storage/
+  AWS_ACCESS_KEY_ID?: string; // R2 API token access key (wrangler secret put AWS_ACCESS_KEY_ID)
+  AWS_SECRET_ACCESS_KEY?: string; // R2 API token secret (wrangler secret put AWS_SECRET_ACCESS_KEY)
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
-  R2_BUCKET_NAME?: string; // Override bucket name (default: 'moltbot-data')
-  CF_ACCOUNT_ID?: string; // Cloudflare account ID for R2 endpoint
+  R2_BUCKET_NAME?: string; // Override bucket name (default matches wrangler r2_buckets[].bucket_name)
+  CF_ACCOUNT_ID?: string; // Cloudflare account ID for R2 endpoint URL
   // Browser Rendering binding for CDP shim
   BROWSER?: Fetcher;
   CDP_SECRET?: string; // Shared secret for CDP endpoint authentication
