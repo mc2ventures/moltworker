@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
-import { findExistingMoltbotProcess } from './process';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { findExistingMoltbotProcess, ensureMoltbotGateway } from './process';
 import type { Sandbox, Process } from '@cloudflare/sandbox';
-import { createMockSandbox } from '../test-utils';
+import { createMockSandbox, createMockEnv } from '../test-utils';
+import { _resetStartupState } from './startup-state';
 
 function createFullMockProcess(overrides: Partial<Process> = {}): Process {
   return {
@@ -141,5 +142,20 @@ describe('findExistingMoltbotProcess', () => {
 
     const result = await findExistingMoltbotProcess(sandbox);
     expect(result).toBeNull();
+  });
+});
+
+describe('ensureMoltbotGateway', () => {
+  beforeEach(() => {
+    _resetStartupState();
+  });
+
+  it('throws with clear message when no AI provider is configured', async () => {
+    const { sandbox } = createMockSandbox({ processes: [] });
+    const env = createMockEnv(); // no ANTHROPIC_API_KEY, etc.
+
+    await expect(ensureMoltbotGateway(sandbox, env)).rejects.toThrow(
+      /No AI provider configured/,
+    );
   });
 });

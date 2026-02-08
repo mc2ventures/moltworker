@@ -95,7 +95,7 @@ else
     echo "R2 not mounted, trying Worker backup restore if configured..."
     # Restore from Worker (tar.gz via GET /internal/backup) when FUSE/mount unavailable
     if [ -n "$WORKER_URL" ] && [ -n "$BACKUP_RESTORE_TOKEN" ]; then
-        if curl -sf -H "X-Backup-Token: $BACKUP_RESTORE_TOKEN" "$WORKER_URL/internal/backup" | tar xz -C /root 2>/dev/null; then
+        if curl -sf --max-time 60 -H "X-Backup-Token: $BACKUP_RESTORE_TOKEN" "$WORKER_URL/internal/backup" | tar xz -C /root 2>/dev/null; then
             echo "Restored from Worker backup (openclaw/backup.tar.gz)"
             mkdir -p "$CONFIG_DIR"
             date -Iseconds > "$CONFIG_DIR/.last-sync" 2>/dev/null || true

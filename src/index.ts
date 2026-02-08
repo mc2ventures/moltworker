@@ -27,6 +27,7 @@ import type { AppEnv, MoltbotEnv } from './types';
 import { MOLTBOT_PORT } from './config';
 import { createAccessMiddleware } from './auth';
 import { ensureMoltbotGateway, findExistingMoltbotProcess, syncToR2 } from './gateway';
+import { getStartupFailure } from './gateway/startup-state';
 import { publicRoutes, api, adminUi, debug, cdp } from './routes';
 import { redactSensitiveParams } from './utils/logging';
 import loadingPageHtml from './assets/loading.html';
@@ -265,13 +266,14 @@ app.all('*', async (c) => {
   } catch (error) {
     console.error('[PROXY] Failed to start Moltbot:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    let hint = 'Check worker logs with: wrangler tail';
-    if (!c.env.ANTHROPIC_API_KEY) {
-      hint = 'ANTHROPIC_API_KEY is not set. Run: wrangler secret put ANTHROPIC_API_KEY';
-    } else if (errorMessage.includes('heap out of memory') || errorMessage.includes('OOM')) {
-      hint = 'Gateway ran out of memory. Try again or check for memory leaks.';
-    }
+    const stored = getStartupFailure();
+    const hint =
+      stored?.hint ||
+      (!c.env.ANTHROPIC_API_KEY
+        ? 'ANTHROPIC_API_KEY is not set. Run: wrangler secret put ANTHROPIC_API_KEY'
+        : errorMessage.includes('heap out of memory') || errorMessage.includes('OOM')
+          ? 'Gateway ran out of memory. Try again or check for memory leaks.'
+          : 'Check worker logs with: wrangler tail');
 
     return c.json(
       {

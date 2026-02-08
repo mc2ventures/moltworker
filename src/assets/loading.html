@@ -132,6 +132,21 @@
       .ready {
         color: #4ade80;
       }
+
+      .btn-retry {
+        display: inline-block;
+        margin-top: 16px;
+        padding: 10px 24px;
+        background: #3b82f6;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      .btn-retry:hover {
+        background: #2563eb;
+      }
     </style>
   </head>
   <body>
@@ -147,16 +162,38 @@
 
       <p class="error" id="error"></p>
 
-      <p class="info">This usually takes 1-2 minutes on cold start</p>
+      <p class="info" id="info">This usually takes 1-2 minutes on cold start</p>
+      <p id="retry-container" style="display: none;"></p>
     </div>
 
     <script>
       const statusEl = document.getElementById('status');
       const titleEl = document.getElementById('title');
       const errorEl = document.getElementById('error');
+      const infoEl = document.getElementById('info');
+      const retryContainer = document.getElementById('retry-container');
+      const startTime = Date.now();
       let pollCount = 0;
       let consecutiveErrors = 0;
       const maxConsecutiveErrors = 5;
+
+      function elapsedText() {
+        const s = Math.floor((Date.now() - startTime) / 1000);
+        if (s < 60) return s + 's';
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        return m + 'm ' + r + 's';
+      }
+
+      async function doRetry() {
+        try {
+          await fetch('/api/retry-startup');
+          window.location.reload();
+        } catch (e) {
+          errorEl.textContent = 'Retry failed. Please refresh the page.';
+          errorEl.style.display = 'block';
+        }
+      }
 
       async function checkStatus() {
         pollCount++;
@@ -167,59 +204,60 @@
           consecutiveErrors = 0;
 
           if (data.ok && data.status === 'running') {
-            // Container is ready! Reload the page
             titleEl.innerHTML = '<span class="ready">Moltworker is ready!</span>';
             statusEl.textContent = 'Redirecting...';
             document.querySelector('.spinner').style.display = 'none';
-
-            // Small delay so user sees the "ready" message
-            setTimeout(() => {
-              window.location.reload();
-            }, 500);
+            setTimeout(() => window.location.reload(), 500);
             return;
           }
 
-          // Show error state when API returns status 'error'
+          if (data.status === 'startup_failed') {
+            errorEl.textContent = (data.message || 'Startup failed') + (data.hint ? ' — ' + data.hint : '');
+            errorEl.style.display = 'block';
+            statusEl.textContent = 'Startup failed';
+            infoEl.textContent = 'You can retry startup below.';
+            retryContainer.style.display = 'block';
+            retryContainer.innerHTML = '<button class="btn-retry" type="button">Retry startup</button>';
+            retryContainer.querySelector('.btn-retry').onclick = doRetry;
+            return;
+          }
+
           if (data.status === 'error') {
             errorEl.textContent = (data.message || data.error || 'Unknown error') + (data.hint ? ' — ' + data.hint : '');
             errorEl.style.display = 'block';
             statusEl.textContent = 'Error checking gateway';
           } else {
             errorEl.style.display = 'none';
+            retryContainer.style.display = 'none';
             const message =
               data.message ||
               (data.status === 'not_running' || data.status === 'no_process'
-                ? 'Container is starting up...'
+                ? 'Container is starting up... (' + elapsedText() + ')'
                 : data.status === 'not_responding' || data.status === 'starting'
-                  ? 'Container started, waiting for gateway...'
-                  : 'Checking status... (poll #' + pollCount + ')');
+                  ? 'Waiting for gateway... (' + elapsedText() + ')'
+                  : 'Checking status... (' + elapsedText() + ')');
             statusEl.textContent = message;
           }
-          if (data.hint && pollCount > 30 && data.status !== 'error') {
-            document.querySelector('.info').textContent = data.hint;
-          } else if (pollCount > 90 && data.status !== 'error') {
-            document.querySelector('.info').textContent =
-              'Taking longer than usual. Check worker logs: npx wrangler tail';
+          if (data.hint && pollCount > 30 && data.status !== 'error' && data.status !== 'startup_failed') {
+            infoEl.textContent = data.hint;
+          } else if (pollCount > 90 && data.status !== 'error' && data.status !== 'startup_failed') {
+            infoEl.textContent = 'Taking longer than usual. Check worker logs: npx wrangler tail';
           }
 
-          // Continue polling
           setTimeout(checkStatus, 2000);
         } catch (err) {
           consecutiveErrors++;
-
           if (consecutiveErrors >= maxConsecutiveErrors) {
             errorEl.textContent = 'Unable to reach server. Please refresh the page.';
             errorEl.style.display = 'block';
             statusEl.textContent = 'Connection lost';
           } else {
-            statusEl.textContent =
-              'Retrying... (' + consecutiveErrors + '/' + maxConsecutiveErrors + ')';
+            statusEl.textContent = 'Retrying... (' + consecutiveErrors + '/' + maxConsecutiveErrors + ')';
             setTimeout(checkStatus, 3000);
           }
         }
       }
 
-      // Start polling after a brief delay
       setTimeout(checkStatus, 1000);
     </script>
   </body>

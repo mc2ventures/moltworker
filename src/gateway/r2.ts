@@ -79,7 +79,13 @@ export async function mountR2Storage(sandbox: Sandbox, env: MoltbotEnv): Promise
 }
 
 /**
- * Internal mount: try official pattern first (endpoint only), then with explicit credentials if set.
+ * Internal mount: single mountBucket() call to avoid duplicate passwd entries.
+ *
+ * The SDK/s3fs writes credentials to a passwd file. Calling mountBucket twice
+ * (e.g. once without creds, once with) appends two entries for the same bucket
+ * and causes "multiple entries for the same bucket(default) in the passwd file".
+ * So we call mountBucket exactly once: with credentials if we have them,
+ * otherwise endpoint only (SDK auto-detects AWS_* from Worker secrets).
  */
 async function doMount(sandbox: Sandbox, env: MoltbotEnv): Promise<boolean> {
   const bucketName = getR2BucketName(env);
@@ -98,43 +104,37 @@ async function doMount(sandbox: Sandbox, env: MoltbotEnv): Promise<boolean> {
     return true;
   }
 
-  // Official pattern: mountBucket with endpoint only; SDK auto-detects AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+  // Single mountBucket call: with creds if set, else endpoint only (SDK auto-detects AWS_*)
+  const mountOptions: { endpoint: string; credentials?: { accessKeyId: string; secretAccessKey: string } } = {
+    endpoint,
+  };
+  if (hasExplicitCreds) {
+    mountOptions.credentials = {
+      accessKeyId: env.AWS_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY!,
+    };
+    console.log(`${LOG_PREFIX} Calling mountBucket once (with explicit credentials)`);
+  } else {
+    console.log(`${LOG_PREFIX} Calling mountBucket once (SDK will use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from secrets)`);
+  }
+
   try {
-    await sandbox.mountBucket(bucketName, R2_MOUNT_PATH, { endpoint });
+    await sandbox.mountBucket(bucketName, R2_MOUNT_PATH, mountOptions);
     if (await isR2Mounted(sandbox, 'post-mount')) {
-      console.log(`${LOG_PREFIX} SUCCESS — SDK mountBucket (${Date.now() - startTime}ms)`);
+      console.log(`${LOG_PREFIX} SUCCESS (${Date.now() - startTime}ms)`);
       return true;
     }
     console.log(`${LOG_PREFIX} mountBucket returned OK but mount not detected in mount table`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(`${LOG_PREFIX} mountBucket (no creds) threw: ${msg.slice(0, 200)} (${Date.now() - startTime}ms)`);
+    console.log(`${LOG_PREFIX} mountBucket threw: ${msg.slice(0, 250)} (${Date.now() - startTime}ms)`);
     if (msg.includes('fuse') || msg.includes('modprobe') || msg.includes('FUSE')) {
       console.error(
         `${LOG_PREFIX} R2 mount requires FUSE; only works in production (wrangler deploy). Not available in wrangler dev.`,
       );
     }
-    if (msg.includes('Credentials') || msg.includes('credentials')) {
+    if (!hasExplicitCreds && (msg.includes('Credentials') || msg.includes('credentials'))) {
       console.log(`${LOG_PREFIX} Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY via: npx wrangler secret put AWS_ACCESS_KEY_ID`);
-    }
-  }
-
-  // Fallback: pass credentials explicitly (R2_* or AWS_*) per mount-buckets guide
-  if (hasExplicitCreds) {
-    const accessKeyId = env.AWS_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID!;
-    const secretAccessKey = env.AWS_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY!;
-    try {
-      await sandbox.mountBucket(bucketName, R2_MOUNT_PATH, {
-        endpoint,
-        credentials: { accessKeyId, secretAccessKey },
-      });
-      if (await isR2Mounted(sandbox, 'post-mount-creds')) {
-        console.log(`${LOG_PREFIX} SUCCESS — SDK mountBucket with explicit credentials (${Date.now() - startTime}ms)`);
-        return true;
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`${LOG_PREFIX} mountBucket (with creds) threw: ${msg.slice(0, 200)} (${Date.now() - startTime}ms)`);
     }
   }
 
@@ -146,7 +146,7 @@ async function doMount(sandbox: Sandbox, env: MoltbotEnv): Promise<boolean> {
   const elapsed = Date.now() - startTime;
   console.error(
     `${LOG_PREFIX} FAILED (${elapsed}ms). Gateway will run without persistent storage. ` +
-      'Use binding backup (tar.gz + put) or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY and deploy with wrangler deploy.',
+      'Binding backup (tar.gz + put) will be used for cron; set WORKER_URL + BACKUP_RESTORE_TOKEN for restore at startup.',
   );
   return false;
 }

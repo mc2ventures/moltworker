@@ -59,41 +59,38 @@ describe('mountR2Storage', () => {
     });
   });
 
-  describe('SDK mountBucket (official pattern)', () => {
-    it('tries mountBucket with endpoint only first (SDK auto-detects AWS_*)', async () => {
+  describe('SDK mountBucket (single call to avoid duplicate passwd entries)', () => {
+    it('calls mountBucket with endpoint only when no explicit credentials', async () => {
       const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted check
-        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // verify
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
 
-      const env = createMockEnvWithR2();
+      const env = createMockEnv({ CF_ACCOUNT_ID: 'account123' });
 
       await mountR2Storage(sandbox, env);
 
+      expect(mountBucketMock).toHaveBeenCalledTimes(1);
       expect(mountBucketMock).toHaveBeenCalledWith(
         'moltdata',
         '/data/moltbot',
-        { endpoint: 'https://test-account-id.r2.cloudflarestorage.com' },
+        { endpoint: 'https://account123.r2.cloudflarestorage.com' },
       );
     });
 
-    it('tries mountBucket with explicit credentials when no-creds fails', async () => {
+    it('calls mountBucket once with credentials when R2_* or AWS_* set', async () => {
       const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
-      mountBucketMock
-        .mockRejectedValueOnce(new Error('MissingCredentialsError: No credentials found'))
-        .mockResolvedValueOnce(undefined);
-
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))   // isR2Mounted (initial check)
-        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // verify after creds mount
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
 
       const env = createMockEnvWithR2();
 
       const result = await mountR2Storage(sandbox, env);
 
       expect(result).toBe(true);
-      expect(mountBucketMock).toHaveBeenCalledTimes(2);
-      expect(mountBucketMock).toHaveBeenLastCalledWith(
+      expect(mountBucketMock).toHaveBeenCalledTimes(1);
+      expect(mountBucketMock).toHaveBeenCalledWith(
         'moltdata',
         '/data/moltbot',
         {
@@ -142,7 +139,7 @@ describe('mountR2Storage', () => {
   });
 
   describe('error handling', () => {
-    it('returns false when both mountBucket attempts fail', async () => {
+    it('returns false when mountBucket fails', async () => {
       const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
       mountBucketMock.mockRejectedValue(new Error('SDK mount failed'));
 
@@ -201,15 +198,14 @@ describe('mountR2Storage', () => {
     it('resets lock after failure so next attempt can retry', async () => {
       const { sandbox, mountBucketMock, startProcessMock } = createMockSandbox({ mounted: false });
       mountBucketMock
-        .mockRejectedValueOnce(new Error('fail'))  // no-creds
-        .mockRejectedValueOnce(new Error('fail'))  // with-creds
-        .mockResolvedValueOnce(undefined);        // no-creds on retry succeeds
+        .mockRejectedValueOnce(new Error('fail'))
+        .mockResolvedValueOnce(undefined);
 
       startProcessMock
-        .mockResolvedValueOnce(createMockProcess(''))   // first attempt: isR2Mounted
-        .mockResolvedValueOnce(createMockProcess(''))   // first attempt: final check
-        .mockResolvedValueOnce(createMockProcess(''))   // second attempt: isR2Mounted
-        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));  // second: verify
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess(''))
+        .mockResolvedValueOnce(createMockProcess('s3fs on /data/moltbot type fuse.s3fs\n'));
 
       const env = createMockEnvWithR2();
 

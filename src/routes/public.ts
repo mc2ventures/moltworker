@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { MOLTBOT_PORT } from '../config';
 import { ensureMoltbotGateway, findExistingMoltbotProcess } from '../gateway';
+import { clearStartupFailure, getStartupFailure } from '../gateway/startup-state';
 
 const BACKUP_KEY = 'openclaw/backup.tar.gz';
 
@@ -39,8 +40,16 @@ publicRoutes.get('/api/status', async (c) => {
   try {
     const process = await findExistingMoltbotProcess(sandbox);
     if (!process) {
+      const failure = getStartupFailure();
+      if (failure) {
+        return c.json({
+          ok: false,
+          status: 'startup_failed',
+          message: failure.message,
+          hint: failure.hint,
+        });
+      }
       console.log('[Status] No gateway process yet — triggering startup if not already in progress');
-      // Ensure startup is triggered (e.g. if first request served loading page but waitUntil didn't run)
       c.executionCtx.waitUntil(
         ensureMoltbotGateway(sandbox, c.env).catch((err: Error) => {
           console.error('[Status] Background startup attempt failed:', err?.message ?? err);
@@ -88,6 +97,12 @@ publicRoutes.get('/api/status', async (c) => {
       hint: 'Check worker logs: npx wrangler tail',
     });
   }
+});
+
+// GET /api/retry-startup - Clear last startup failure so next poll can trigger a fresh attempt (no auth)
+publicRoutes.get('/api/retry-startup', (c) => {
+  clearStartupFailure();
+  return c.json({ ok: true, message: 'Startup failure cleared. Reload the page to retry.' });
 });
 
 // GET /internal/backup - Stream R2 backup tarball for container restore (token auth, no CF Access)
